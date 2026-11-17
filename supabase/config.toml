@@ -1,0 +1,9 @@
+# Local Academi Supabase configuration.
+# Keep `private` out of api.schemas so its tables/functions are not exposed by PostgREST.
+project_id = "academi"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000

@@ -1,0 +1,9 @@
+{
+  "routes": [
+    { "path": "/", "title": "Home" },
+    { "path": "/courses", "title": "Course catalog" },
+    { "path": "/courses/:slug", "title": "Course details" },
+    { "path": "/auth/signin", "title": "Sign in" },
+    { "path": "/auth/signup", "title": "Sign up" }
+  ]
+}
