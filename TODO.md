@@ -43,10 +43,13 @@
 - [x] **Preservation, setup, and approval boundary**
   - Preserve the existing homepage, course catalog, search, category filters, and course-detail pages. Avoid unnecessary architectural changes.
   - Keep payments, subscriptions, commissions, instructor payouts, certificates, and advanced marketplace features outside this milestone.
-  - The initial target country or regional market is not finalized. Do not create a Supabase project or select a database region until that decision is made.
   - Do not connect to an external Supabase project, request credentials, implement application authentication, or modify existing application code. SQL-side registration profile provisioning is in scope. Do not expose secrets or credentials in source files or chat.
   - Before proceeding beyond SQL design and local validation, show the migration files, explain the security policies in beginner-friendly language, identify unresolved issues, and wait for the user's approval.
   - Do not begin another milestone without the user's explicit approval.
+
+### Launch-market planning
+
+- [x] **Initial market: Yemen** — Yemen is the selected initial launch market. This decision does not authorize creating a hosted Supabase project or choosing/applying a database region; hosted configuration requires separate review and explicit approval.
 
 ### Validation boundary
 
@@ -122,6 +125,79 @@ The migration includes all requested tables with RLS enabled, profile provisioni
 ### Validation boundary
 
 `pnpm typecheck`, `pnpm lint`, and `pnpm build` passed. Eight assertions against live-shaped course records passed for title/description/instructor search, category selection, combined filters, zero matches, and reset. With Supabase variables unset, `/courses` returned HTTP 200 with four sample results and search/filter controls; a sample detail returned 200, an unknown slug returned 404, and `/manus-routes.json` returned valid JSON. No Supabase query was executed and the live path was not end-to-end verified because there is no configured project or credential. The migration remains unapplied. The approved schema intentionally does not expose other users' `public.profiles`; live instructor names come from `instructor_profiles.public_name`.
+
+## Database hardening updates
+
+### Completed locally — approved database lock/review hardening (awaiting user review)
+
+- [x] **Course lock-order analysis and concurrency safety**
+  - Before changing code, map the complete lock acquisition order for all affected operations, including implicit row locks acquired before triggers execute.
+  - Verify that the ordering is consistent across approval, child-row edits/deletes, and answer-key updates.
+  - Do not assume that explicitly locking rows in a deterministic order eliminates every deadlock.
+  - If a fully consistent order cannot be guaranteed, implement safe transaction behavior and document which operations may require retry.
+  - Keep locking narrow and avoid global serialization.
+  - Test genuine two-session concurrency for both identified lock races and demonstrate the expected result, not merely that both SQL commands execute.
+
+- [x] **Freeze pending initial submissions and provide owner-only withdrawal**
+  - Instructors must not be able to edit course metadata, outcomes, sections, lessons, assessments, or other submitted content while the initial course submission is pending review.
+  - Add a secure owner-only withdrawal operation that returns the course to draft.
+  - Verify that withdrawal cannot bypass administrator approval or affect published courses.
+  - After withdrawal, the instructor must be able to edit and submit again.
+  - Preserve the existing staged-revision process for already-published courses.
+  - Test unauthorized users, other instructors, and students as well as the owning instructor; test every relevant pending-review edit path, including direct database operations and RPCs.
+  - Test instructor attempts to approve or publish courses.
+
+- [x] **Forward-only changes and local-only verification boundary**
+  - Use a new forward-only migration; do not edit or rewrite existing migrations.
+  - Do not weaken RLS, ownership checks, admin approval, or deletion protections.
+  - Keep all tests local and disposable. Do not connect to hosted Supabase, deploy, commit, or push.
+  - Run relevant local tests and run typecheck, lint, and build if application files change.
+  - Report exact files changed, full migration behavior and rollback considerations, pgTAP assertion count/results, two-session concurrency results, applicable code quality checks, and remaining risks. Stop for user review before commit or hosted work.
+
+### Validation results and limits
+
+All three migrations were applied in timestamp order to a fresh disposable PostgreSQL 16 cluster with local Supabase-compatible Auth/role fixtures. All pgTAP suites passed: 266/266 assertions (57 core LMS, 121 course revisions, 88 pending-review freeze). The concurrency driver passed three two-session races and observed each expected blocking relationship through `pg_blocking_pids()`: an owning instructor's lesson edit waited behind initial submission and was rejected after the course became pending; the live lesson edit committed and revision approval rejected the stale snapshot; and the question edit plus answer-key RPC both committed, the requested key persisted, and course content version advanced. All waits/sessions stayed within configured timeouts and cleanup removed the per-run objects and fixture rows. No deadlock occurred in these controlled races.
+
+The Supabase CLI/Docker stack and hosted Supabase were not used, so actual PostgREST/Auth behavior and hosted configuration remain unverified. No application code changed; application typecheck/lint/build were not rerun. No remote migration, commit, push, or deployment occurred; the temporary database cluster was removed.
+
+### Accepted concurrency-test follow-up (complete; awaiting user review)
+
+- [x] **Verify real lock waits and bound every test wait**
+  - When a test expects session B to wait on session A, verify the actual blocking relationship using `pg_blocking_pids()` or an equivalent PostgreSQL lock-wait check.
+  - Do not treat an `active` query alone as proof of blocking.
+  - Add bounded timeouts to all polling and session waits.
+  - On timeout, print useful diagnostics including session PIDs, query states, wait events, and blockers.
+  - Ensure the test fails if the intended lock wait never occurs.
+- [x] **Race an owning instructor's draft content edit against initial submission**
+  - Add a genuine two-session test using the owning instructor identity, not only an administrator.
+  - Race a draft course content edit against the owner's initial submission for admin review.
+  - Verify the intended serialization outcome and final course status/content.
+  - Confirm that no instructor edit can slip through after the course becomes `pending_review`.
+  - Ensure the test is deterministic, bounded by timeouts, and checks the actual blocking relationship where applicable.
+- [x] **Make concurrency-test cleanup unique, ownership-safe, and visible**
+  - Replace fixed temporary function and trigger names with unique per-run names, or safely refuse to start if collisions exist.
+  - Cleanup must only remove objects created by the current run.
+  - Do not suppress cleanup errors silently.
+  - Ensure cleanup runs on success, failure, and interruption where shell behavior permits.
+  - Keep the existing local-only database URL validation and safety checks intact.
+- [x] Do not edit application files or any of the three migrations; run concurrency tests only against an explicitly disposable local PostgreSQL database; run the full pgTAP suite against a fresh disposable PostgreSQL 16 database after changes; run shell syntax checks and `git diff --check`; do not connect to hosted Supabase, deploy, commit, or push; report exact changed files, results, remaining concurrency limitations, and current Git status, then stop for user review.
+
+### Completed locally — assessment-preserving deletes and concurrent revision creation (awaiting user review)
+
+- [x] **Assessment-preserving deletes and concurrent revision creation**
+  - Add a new forward-only migration changing only the two assessment foreign-key delete actions from CASCADE to RESTRICT; preserve all existing data, columns, relationships, other constraints, RLS policies, and permissions.
+  - Prevent deleting a lesson if it has an attached assessment, and prevent deleting a course if it has assessments, enrollments, or learner progress. Do not weaken RLS or grant additional DELETE privileges.
+  - Add direct-deletion pgTAP tests proving an authenticated instructor cannot directly delete a course; privileged database-level course deletion is blocked by enrollments and assessments; lesson deletion is blocked by learner progress and assessments; and failed deletes leave related records intact.
+  - Add a genuine concurrent `create_course_revision` test using two independent PostgreSQL sessions as the owning instructor for the same course. Verify the expected blocking relationship with `pg_blocking_pids()`, bounded timeouts, safe per-run cleanup, exactly one active revision, and a clean losing-call failure without a duplicate.
+  - Preserve the pending-review freeze and withdrawal workflow, course ownership, administrator approval, RLS, staged revisions, and existing migrations. Do not introduce global advisory locking or recreate the missing historical migration.
+  - Apply migrations in timestamp order to a fresh disposable PostgreSQL 16 database; run the complete pgTAP and concurrency suites; run `bash -n` and `git diff --check`.
+  - Do not connect to hosted Supabase, deploy, commit, or push. Report exact changed files, migration behavior, test counts/results, concurrency evidence, Git status, rollback considerations, and remaining limitations, then stop for user review.
+
+### Validation results and limits
+
+All four migrations were applied in timestamp order to a fresh disposable PostgreSQL 16 cluster. All four pgTAP files passed: **293/293 assertions** (57 core LMS, 121 staged revisions, 88 initial-review freeze, 27 deletion protection). The local concurrency driver passed all four two-session races and explicitly confirmed each expected wait through `pg_blocking_pids()`; for concurrent owner revision creation, the first call committed, the blocked second call failed with the expected active-revision error, and exactly one active revision remained. `bash -n` and `git diff --check` passed. The driver removed its per-run fixtures and trigger/function, and the temporary cluster listener and data directory were verified removed.
+
+The run used a disposable local PostgreSQL 16 compatibility harness, not Supabase CLI/PostgREST or a hosted project. Hosted schema drift and existing hosted rows could not be inspected; the new migration validates references when applied and may fail if a hosted database differs from the reviewed schema. No application files, existing migrations, remote database, commit, push, or deployment were changed.
 
 ## Later outcomes — require separate approval
 
