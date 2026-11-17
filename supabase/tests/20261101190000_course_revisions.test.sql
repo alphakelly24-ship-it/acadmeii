@@ -25,6 +25,8 @@ INSERT INTO auth.users (
   ('55555555-5555-4555-8555-555555555555', 'authenticated', 'authenticated', 'admin-one@academi.test', '', now(), '{}'::jsonb, '{}'::jsonb, now(), now());
 
 SELECT private.bootstrap_first_admin('55555555-5555-4555-8555-555555555555');
+SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
+SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 INSERT INTO public.user_roles (user_id, role) VALUES
   ('11111111-1111-4111-8111-111111111111', 'student'),
   ('22222222-2222-4222-8222-222222222222', 'student'),
@@ -87,6 +89,7 @@ INSERT INTO private.assessment_answer_keys (question_id, correct_option_id)
 VALUES ('b3333333-3333-4333-8333-333333333333', 'c3333333-3333-4333-8333-333333333333');
 
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 UPDATE public.courses
@@ -96,6 +99,7 @@ RESET ROLE;
 
 -- The original first-submission/publication path is still usable.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 SELECT lives_ok(
@@ -104,7 +108,7 @@ SELECT lives_ok(
   'instructor can still create a draft course'
 );
 SELECT lives_ok(
-  $$UPDATE public.courses SET status = 'pending_review' WHERE slug = 'initial-submission-flow'$$,
+  $$SELECT public.submit_course_for_review((SELECT id FROM public.courses WHERE slug = 'initial-submission-flow'))$$,
   'instructor can still submit a new course for initial review'
 );
 SELECT is(
@@ -114,6 +118,7 @@ SELECT is(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT lives_ok(
@@ -155,6 +160,7 @@ SELECT ok(NOT has_function_privilege('service_role', 'public.reject_course_revis
 
 -- Revisions may be created only by the owning instructor for a published course.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -267,6 +273,7 @@ SELECT is(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
 SELECT is((SELECT count(*)::integer FROM public.course_revisions), 0, 'ordinary student cannot see revision headers');
@@ -286,6 +293,7 @@ SELECT throws_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE anon;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 SELECT throws_ok($$SELECT * FROM public.course_revisions$$, '42501', NULL, 'anonymous user cannot read staged revision headers');
@@ -297,6 +305,7 @@ RESET ROLE;
 -- Submitted revisions are immutable to instructors. Only an admin may make a
 -- decision, through the guarded approval/rejection functions.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 SELECT lives_ok(
@@ -343,6 +352,7 @@ SELECT throws_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT throws_ok(
@@ -419,6 +429,7 @@ RESET ROLE;
 -- Stale revisions must be rejected rather than overwrite a newer administrator
 -- edit. An admin edit to live curriculum advances the course version too.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -433,6 +444,7 @@ SELECT lives_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 UPDATE public.courses SET title = 'Admin latest title'
@@ -472,6 +484,7 @@ RESET ROLE;
 -- Assessment descendants are versioned too, so edits to questions, options, or
 -- answer keys after submission cannot evade stale-snapshot rejection.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -484,6 +497,7 @@ SELECT lives_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT set_config('test.revision_version', (
@@ -529,6 +543,7 @@ RESET ROLE;
 -- A removed lesson with learner progress is explicitly rejected and remains
 -- intact. The same function rejects a lesson with an associated assessment.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -555,6 +570,7 @@ SELECT lives_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT ok(
@@ -620,6 +636,7 @@ BEFORE INSERT ON public.lessons
 FOR EACH ROW EXECUTE FUNCTION private.test_fail_atomic_revision_lesson();
 
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -644,6 +661,7 @@ SELECT lives_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT throws_ok(
@@ -680,6 +698,7 @@ RESET ROLE;
 DROP TRIGGER test_fail_atomic_revision_lesson ON public.lessons;
 DROP FUNCTION private.test_fail_atomic_revision_lesson();
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT is(
@@ -717,6 +736,7 @@ SELECT is(
 -- reject manually; a rejection releases the one-active-revision slot.
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -734,6 +754,7 @@ SELECT throws_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT ok(
@@ -755,6 +776,7 @@ RESET ROLE;
 -- A separate pending revision exercises the explicit administrator rejection
 -- transition and confirms that the reason and decision actor are stored.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -765,6 +787,7 @@ SELECT lives_ok(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT lives_ok(
@@ -791,6 +814,7 @@ RESET ROLE;
 -- A second instructor may manage their own revisions but cannot read or alter
 -- the first instructor's staged records.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '44444444-4444-4444-8444-444444444444', true);
 SELECT set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-8444-444444444444","role":"authenticated"}', true);
 INSERT INTO revision_test_ids (name, id)
@@ -825,6 +849,7 @@ SELECT is(
 );
 RESET ROLE;
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT is(

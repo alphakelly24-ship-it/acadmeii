@@ -52,6 +52,11 @@ INSERT INTO public.instructor_profiles (user_id, public_name) VALUES
 INSERT INTO public.categories (id, name, slug) VALUES
   ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'Product Design', 'product-design');
 
+-- The fixtures below include admin-created pending submissions. Set the
+-- simulated authenticated actor before course INSERT triggers run.
+SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
+SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
+
 -- Course A is first submitted for review and then published by the test admin.
 INSERT INTO public.courses (
   id, instructor_id, category_id, slug, title, description, status
@@ -66,8 +71,10 @@ SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-5555555
 UPDATE public.courses
 SET status = 'published', published_at = now()
 WHERE id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
-SELECT set_config('request.jwt.claim.sub', '', true);
-SELECT set_config('request.jwt.claims', '{"role":"postgres"}', true);
+-- Seed fixtures as the trusted test admin so the later trigger backstop sees
+-- an authorized actor even though the SQL connection is the database owner.
+SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
+SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 
 INSERT INTO public.course_sections (id, course_id, title, position) VALUES
   ('f1111111-1111-4111-8111-111111111111', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Published Section', 1),
@@ -118,6 +125,7 @@ INSERT INTO public.assessment_responses (
 
 -- Anonymous users: published catalog metadata is readable, private data is not.
 SET LOCAL ROLE anon;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '', true);
 SELECT set_config('request.jwt.claims', '{"role":"anon"}', true);
 SELECT is((SELECT count(*)::integer FROM public.categories), 1, 'anonymous visitors can read categories');
@@ -132,6 +140,7 @@ RESET ROLE;
 -- Instructors: owners can manage their courses, but cannot see another
 -- instructor's drafts or publish a course themselves.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '33333333-3333-4333-8333-333333333333', true);
 SELECT set_config('request.jwt.claims', '{"sub":"33333333-3333-4333-8333-333333333333","role":"authenticated"}', true);
 SELECT is((SELECT count(*)::integer FROM public.user_roles WHERE user_id = auth.uid()), 2, 'one account may hold both student and instructor roles');
@@ -150,9 +159,9 @@ SELECT throws_ok(
   '42501', NULL, 'instructor cannot publish a course'
 );
 SELECT is((SELECT status::text FROM public.courses WHERE id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'), 'draft', 'failed publication leaves the course unpublished');
-SELECT throws_ok(
+SELECT lives_ok(
   $$UPDATE public.courses SET status = 'published' WHERE id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'$$,
-  '42501', NULL, 'instructor cannot approve a course that is pending review'
+  'instructor cannot approve a pending course; RLS filters the update'
 );
 SELECT is((SELECT status::text FROM public.courses WHERE id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'), 'pending_review', 'non-admin publication attempt leaves course pending review');
 SELECT throws_ok(
@@ -196,6 +205,7 @@ RESET ROLE;
 -- Administrator: can approve a course only after it is pending review and can
 -- assign another account a role, but cannot grant themselves a new role.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '55555555-5555-4555-8555-555555555555', true);
 SELECT set_config('request.jwt.claims', '{"sub":"55555555-5555-4555-8555-555555555555","role":"authenticated"}', true);
 SELECT lives_ok(
@@ -237,6 +247,7 @@ RESET ROLE;
 -- Student: can see only their own learning rows, may save a resume position,
 -- but cannot enroll themselves, mark completion, write quiz scores, or set keys.
 SET LOCAL ROLE authenticated;
+SET LOCAL search_path = public, extensions;
 SELECT set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111', true);
 SELECT set_config('request.jwt.claims', '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
 SELECT is((SELECT count(*)::integer FROM public.enrollments), 1, 'student can read only their own enrollment');
